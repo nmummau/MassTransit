@@ -39,9 +39,9 @@ namespace MassTransit
             Event(() => GetJobState, x =>
             {
                 x.ReadOnly = true;
-                x.OnMissingInstance(i => i.ExecuteAsync(context => context.RespondAsync<JobState>(new
+                x.OnMissingInstance(i => i.ExecuteAsync(context => context.RespondAsync<JobState>(new JobStateResponse
                 {
-                    context.Message.JobId,
+                    JobId = context.Message.JobId,
                     CurrentState = "NotFound"
                 })));
             });
@@ -93,7 +93,10 @@ namespace MassTransit
                 When(JobSlotUnavailable)
                     .WaitForJobSlot(this),
                 When(AllocateJobSlotFaulted)
-                    .WaitForJobSlot(this)
+                    .WaitForJobSlot(this),
+                Ignore(AttemptStarted),
+                Ignore(AttemptCompleted),
+                Ignore(AttemptCanceled)
             );
 
             During(WaitingForSlot,
@@ -107,7 +110,10 @@ namespace MassTransit
                                 context.Saga.RetryAttempt = 0;
                             })
                     )
-                    .RequestJobSlot(this)
+                    .RequestJobSlot(this),
+                Ignore(AttemptStarted),
+                Ignore(AttemptCompleted),
+                Ignore(AttemptCanceled)
             );
 
             During(StartingJobAttempt,
@@ -119,11 +125,15 @@ namespace MassTransit
                         context.Saga.Reason = context.Message.Exceptions.FirstOrDefault()?.Message;
                     })
                     .NotifyJobFaulted()
-                    .TransitionTo(Faulted)
+                    .TransitionTo(Faulted),
+                Ignore(JobSlotAllocated),
+                Ignore(JobSlotUnavailable)
             );
 
             During(Started, Completed, Faulted,
-                Ignore(StartJobAttemptFaulted)
+                Ignore(StartJobAttemptFaulted),
+                Ignore(JobSlotAllocated),
+                Ignore(JobSlotUnavailable)
             );
 
             During(StartingJobAttempt, Started,
@@ -177,12 +187,12 @@ namespace MassTransit
 
             During(Completed,
                 When(AttemptCompleted)
+                    .FinalizeJobAttempts()
                     .NotifyJobCompleted(),
                 When(AttemptStarted)
                     .Then(context => context.Saga.Started = context.Message.Timestamp)
                     .PublishJobStarted(),
                 When(JobCompleted)
-                    .FinalizeJobAttempts()
                     .IfElse(context => context.IsScheduledJob(),
                         scheduled => scheduled
                             .DetermineNextStartDate()
@@ -215,6 +225,7 @@ namespace MassTransit
                             .WaitForJobSlot(this),
                         other => other
                             .PublishJobCanceled(x => x.GetCancellationReason())
+                            .ClearNextStartDate()
                             .TransitionTo(Canceled)
                     )
             );
@@ -266,6 +277,7 @@ namespace MassTransit
             During([WaitingForSlot, WaitingToRetry],
                 When(CancelJob)
                     .Unschedule(JobSlotWaitElapsed)
+                    .ClearNextStartDate()
                     .PublishJobCanceled(x => x.GetCancellationReason())
                     .TransitionTo(Canceled)
             );
@@ -284,10 +296,13 @@ namespace MassTransit
 
             During(CancellationPending,
                 When(JobSlotAllocated)
+                    .ClearNextStartDate()
                     .TransitionTo(Canceled),
                 When(JobSlotUnavailable)
+                    .ClearNextStartDate()
                     .TransitionTo(Canceled),
                 When(AllocateJobSlotFaulted)
+                    .ClearNextStartDate()
                     .TransitionTo(Canceled)
             );
 
@@ -333,7 +348,7 @@ namespace MassTransit
                     .Finalize());
 
 
-            // Update recurring jobs, otherwise we're just going to any subsequent duplicate job submissions with a warning
+            // Update recurring jobs, otherwise ignore any duplicate job submissions with a warning
             DuringAny(
                 When(JobSubmitted)
                     .IfElse(context => context.IsScheduledJob(), x => x.UpdateRecurringJob(),
@@ -536,6 +551,15 @@ namespace MassTransit
             });
         }
 
+        public static EventActivityBinder<JobSaga, T> ClearNextStartDate<T>(this EventActivityBinder<JobSaga, T> binder)
+            where T : class
+        {
+            return binder.Then(context =>
+            {
+                context.Saga.NextStartDate = null;
+            });
+        }
+
         static void SetJobProperties(BehaviorContext<JobSaga, JobSubmitted> context)
         {
             if (context.Message.JobProperties is { Count: > 0 })
@@ -570,7 +594,6 @@ namespace MassTransit
                     context.Saga.RetryAttempt++;
                 })
                 .RequestJobSlot(machine);
-            ;
         }
 
         public static EventActivityBinder<JobSaga, T> ClearJobState<T>(this EventActivityBinder<JobSaga, T> binder)

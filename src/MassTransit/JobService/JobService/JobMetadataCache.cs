@@ -13,11 +13,7 @@ namespace MassTransit.JobService
         {
             var key = GenerateJobTypeName(queueName);
 
-            using var hasher = MD5.Create();
-
-            var data = hasher.ComputeHash(Encoding.UTF8.GetBytes(key));
-
-            return new Guid(data);
+            return JobMetadataCache.GenerateHashGuid(key);
         }
 
         public static string GenerateJobTypeName(string queueName)
@@ -39,11 +35,7 @@ namespace MassTransit.JobService
         {
             var key = GenerateJobTypeName(jobName);
 
-            using var hasher = MD5.Create();
-
-            var data = hasher.ComputeHash(Encoding.UTF8.GetBytes(key));
-
-            return new Guid(data);
+            return JobMetadataCache.GenerateHashGuid(key);
         }
 
         public static string GenerateJobTypeName(string jobName)
@@ -53,6 +45,36 @@ namespace MassTransit.JobService
             var name = $"{jobTypeName}:{jobName}";
 
             return name;
+        }
+    }
+
+
+    static class JobMetadataCache
+    {
+        static bool? _fipsMode;
+
+        public static bool IsFipsMode =>
+            CryptoConfig.AllowOnlyFipsAlgorithms ||
+            (_fipsMode ??= bool.TryParse(Environment.GetEnvironmentVariable("MT_FIPS_ENABLE"), out var fipsMode) && fipsMode);
+
+        public static Guid GenerateHashGuid(string key)
+        {
+            if (IsFipsMode)
+            {
+                using var hasher = SHA256.Create();
+
+                var data = hasher.ComputeHash(Encoding.UTF8.GetBytes(key));
+
+                return new Guid(new ReadOnlySpan<byte>(data, 0, 16).ToArray());
+            }
+            else
+            {
+                using var hasher = MD5.Create();
+
+                var data = hasher.ComputeHash(Encoding.UTF8.GetBytes(key));
+
+                return new Guid(data);
+            }
         }
     }
 }

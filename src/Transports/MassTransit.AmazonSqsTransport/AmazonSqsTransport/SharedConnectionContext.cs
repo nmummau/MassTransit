@@ -1,64 +1,72 @@
-﻿namespace MassTransit.AmazonSqsTransport
+﻿namespace MassTransit.AmazonSqsTransport;
+
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using MassTransit.Middleware;
+using Topology;
+
+
+public class SharedConnectionContext :
+    ProxyPipeContext,
+    ConnectionContext
 {
-    using System;
-    using System.Threading;
-    using System.Threading.Tasks;
-    using MassTransit.Middleware;
-    using Topology;
+    readonly ConnectionContext _context;
 
-
-    public class SharedConnectionContext :
-        ProxyPipeContext,
-        ConnectionContext
+    public SharedConnectionContext(ConnectionContext context, CancellationToken cancellationToken)
+        : base(context)
     {
-        readonly ConnectionContext _context;
+        _context = context;
 
-        public SharedConnectionContext(ConnectionContext context, CancellationToken cancellationToken)
-            : base(context)
-        {
-            _context = context;
-            CancellationToken = cancellationToken;
-        }
+        CancellationToken = cancellationToken;
+    }
 
-        public override CancellationToken CancellationToken { get; }
+    public override CancellationToken CancellationToken { get; }
 
-        IConnection ConnectionContext.Connection => _context.Connection;
-        public Uri HostAddress => _context.HostAddress;
-        public IAmazonSqsBusTopology Topology => _context.Topology;
+    public IConnection Connection => _context.Connection;
+    public Uri HostAddress => _context.HostAddress;
+    public IAmazonSqsBusTopology Topology => _context.Topology;
 
-        public Task<QueueInfo> GetQueue(Queue queue)
-        {
-            return _context.GetQueue(queue);
-        }
+    public async Task<QueueInfo> GetQueue(Queue queue, CancellationToken cancellationToken)
+    {
+        using var tokenSource = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken, cancellationToken);
 
-        public Task<QueueInfo> GetQueueByName(string name)
-        {
-            return _context.GetQueueByName(name);
-        }
+        return await _context.GetQueue(queue, tokenSource.Token).ConfigureAwait(false);
+    }
 
-        public Task<bool> RemoveQueueByName(string name)
-        {
-            return _context.RemoveQueueByName(name);
-        }
+    public async Task<QueueInfo> GetQueueByName(string name, CancellationToken cancellationToken)
+    {
+        using var tokenSource = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken, cancellationToken);
 
-        public Task<TopicInfo> GetTopic(Topic topic)
-        {
-            return _context.GetTopic(topic);
-        }
+        return await _context.GetQueueByName(name, tokenSource.Token).ConfigureAwait(false);
+    }
 
-        public Task<TopicInfo> GetTopicByName(string name)
-        {
-            return _context.GetTopicByName(name);
-        }
+    public Task<bool> RemoveQueueByName(string name)
+    {
+        return _context.RemoveQueueByName(name);
+    }
 
-        public Task<bool> RemoveTopicByName(string name)
-        {
-            return _context.RemoveTopicByName(name);
-        }
+    public async Task<TopicInfo> GetTopic(Topic topic, CancellationToken cancellationToken)
+    {
+        using var tokenSource = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken, cancellationToken);
 
-        public ClientContext CreateClientContext(CancellationToken cancellationToken)
-        {
-            return _context.CreateClientContext(cancellationToken);
-        }
+        return await _context.GetTopic(topic, tokenSource.Token).ConfigureAwait(false);
+    }
+
+    public async Task<TopicInfo> GetTopicByName(string name, CancellationToken cancellationToken)
+    {
+        using var tokenSource = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken, cancellationToken);
+
+        return await _context.GetTopicByName(name, tokenSource.Token).ConfigureAwait(false);
+    }
+
+    public Task<bool> RemoveTopicByName(string name)
+    {
+        return _context.RemoveTopicByName(name);
+    }
+
+    public ClientContext CreateClientContext(CancellationToken cancellationToken)
+    {
+        return _context.CreateClientContext(cancellationToken);
     }
 }

@@ -113,8 +113,8 @@
             if (IsStopping)
                 return;
 
-            MessageLockContext lockContext = new ServiceBusMessageLockContext(messageReceiver, message);
-            var context = new ServiceBusReceiveContext(message, _context, lockContext, _clientContext);
+            MessageLockContext lockContext = new ServiceBusMessageLockContext(messageReceiver, message, Stopped);
+            var context = new ServiceBusReceiveContext(message, _context, cancellationToken, lockContext, _clientContext);
 
             CancellationTokenSource cancellationTokenSource = null;
             CancellationTokenRegistration timeoutRegistration = default;
@@ -167,7 +167,6 @@
                 LogContext.Error?.Log("Session Lock Lost: {InputAddress} {MessageId} {SequenceNumber} ({SessionId})", _context.InputAddress,
                     message.MessageId, message.SequenceNumber, message.SessionId);
 
-                await _context.ReceiveObservers.ReceiveFault(context, ex).ConfigureAwait(false);
                 throw;
             }
             catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
@@ -175,7 +174,6 @@
                 LogContext.Error?.Log("Message Lock Lost: {InputAddress} {MessageId} {SequenceNumber}", _context.InputAddress, message.MessageId,
                     message.SequenceNumber);
 
-                await _context.ReceiveObservers.ReceiveFault(context, ex).ConfigureAwait(false);
                 throw;
             }
             catch (OperationCanceledException)
